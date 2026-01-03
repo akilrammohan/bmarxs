@@ -5,7 +5,11 @@ CLI for exporting X/Twitter bookmarks. Designed for both human and agent use.
 ## Install
 
 ```bash
-uv pip install -e .
+pipx install bmarxs   # Recommended
+# or
+uv tool install bmarxs
+# or
+pip install bmarxs
 ```
 
 ## Setup

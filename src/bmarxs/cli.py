@@ -85,14 +85,18 @@ def main(ctx: click.Context, data_dir: Path) -> None:
 @main.command()
 @click.option("--all", "sync_all", is_flag=True, help="Sync all bookmarks (not just new)")
 @click.option("--visible", is_flag=True, help="Show browser window (default: headless)")
+@click.option("--enrich", is_flag=True, help="Fetch URL titles and descriptions")
+@click.option("--enrich-summary", is_flag=True, help="Also extract page text for summaries (implies --enrich)")
 @click.pass_context
-def sync(ctx: click.Context, sync_all: bool, visible: bool) -> None:
+def sync(ctx: click.Context, sync_all: bool, visible: bool, enrich: bool, enrich_summary: bool) -> None:
     """Sync bookmarks from X/Twitter."""
+    from .enricher import enrich_all_bookmarks
+
     data_dir = ctx.obj["data_dir"]
     db = get_db(data_dir)
     session_path = get_session_path(data_dir)
 
-    console.print(f"[bold]Syncing bookmarks...[/bold]")
+    console.print("[bold]Syncing bookmarks...[/bold]")
 
     if sync_all:
         console.print("[yellow]Syncing ALL bookmarks (this may take a while)[/yellow]")
@@ -108,6 +112,17 @@ def sync(ctx: click.Context, sync_all: bool, visible: bool) -> None:
     try:
         count = scraper.sync(sync_all=sync_all)
         console.print(f"\n[bold green]Synced {count} new bookmarks![/bold green]")
+
+        # Enrich URLs if requested
+        if enrich or enrich_summary:
+            console.print("\n[bold]Enriching URLs...[/bold]")
+            enriched = enrich_all_bookmarks(
+                db,
+                include_summary=enrich_summary,
+                only_unenriched=True,
+            )
+            console.print(f"[green]Enriched {enriched} URLs[/green]")
+
     except Exception as e:
         console.print(f"[bold red]Error during sync: {e}[/bold red]")
         raise click.Abort()
@@ -118,6 +133,7 @@ def sync(ctx: click.Context, sync_all: bool, visible: bool) -> None:
 @click.option("--after-tweet", type=str, help="Only show bookmarks saved after this tweet ID")
 @click.option("--author", type=str, help="Filter by author username")
 @click.option("--limit", type=int, help="Maximum number of bookmarks to show")
+@click.option("--unprocessed", is_flag=True, help="Only show unprocessed bookmarks (outputs JSON)")
 @click.option(
     "--format",
     "output_format",
@@ -132,17 +148,23 @@ def list(
     after_tweet: str | None,
     author: str | None,
     limit: int | None,
+    unprocessed: bool,
     output_format: str,
 ) -> None:
     """List bookmarks from the database."""
     data_dir = ctx.obj["data_dir"]
     db = get_db(data_dir)
 
+    # --unprocessed flag forces JSON output for agent consumption
+    if unprocessed:
+        output_format = "json"
+
     bookmarks = db.get_all_bookmarks(
         limit=limit,
         since=since,
         after_tweet_id=after_tweet,
         author=author,
+        unprocessed=unprocessed,
     )
 
     if output_format == "table":
@@ -173,6 +195,7 @@ def list(
             since=since,
             after_tweet_id=after_tweet,
             author=author,
+            unprocessed=unprocessed,
         )
         output = format_bookmarks(bookmarks, output_format)
         click.echo(output)
@@ -242,6 +265,112 @@ def stats(ctx: click.Context) -> None:
             table.add_row(f"@{author['username']}", str(author["count"]))
 
         console.print(table)
+
+
+@main.command()
+@click.option("--summary", is_flag=True, help="Also extract page text for summaries")
+@click.option("--force", is_flag=True, help="Re-enrich all URLs, even already enriched ones")
+@click.pass_context
+def enrich(ctx: click.Context, summary: bool, force: bool) -> None:
+    """Enrich bookmark URLs with titles and descriptions."""
+    from .enricher import enrich_all_bookmarks
+
+    data_dir = ctx.obj["data_dir"]
+    db = get_db(data_dir)
+
+    console.print("[bold]Enriching URLs...[/bold]")
+    if summary:
+        console.print("[dim]Including page text summaries[/dim]")
+
+    enriched = enrich_all_bookmarks(
+        db,
+        include_summary=summary,
+        only_unenriched=not force,
+    )
+
+    console.print(f"\n[bold green]Enriched {enriched} URLs[/bold green]")
+
+
+@main.command()
+@click.argument("query")
+@click.option("--limit", type=int, help="Maximum number of results")
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    help="Output format",
+)
+@click.pass_context
+def search(ctx: click.Context, query: str, limit: int | None, output_format: str) -> None:
+    """Full-text search across bookmarks."""
+    data_dir = ctx.obj["data_dir"]
+    db = get_db(data_dir)
+
+    results = db.search(query, limit=limit)
+
+    if output_format == "table":
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("Author", style="cyan")
+        table.add_column("Text", max_width=60)
+        table.add_column("Created", style="dim")
+        table.add_column("Tweet ID", style="dim")
+
+        count = 0
+        for bookmark in results:
+            text = bookmark.text[:57] + "..." if len(bookmark.text) > 60 else bookmark.text
+            text = text.replace("\n", " ")
+            table.add_row(
+                f"@{bookmark.author_username}",
+                text,
+                bookmark.created_at.strftime("%Y-%m-%d"),
+                bookmark.tweet_id,
+            )
+            count += 1
+
+        console.print(table)
+        console.print(f"\n[dim]Found {count} results for '{query}'[/dim]")
+    else:
+        # Re-fetch for JSON output
+        results = db.search(query, limit=limit)
+        bookmark_list = [b.to_dict() for b in results]
+        click.echo(json.dumps(bookmark_list, indent=2))
+
+
+@main.command("mark-processed")
+@click.argument("tweet_ids", nargs=-1, required=True)
+@click.pass_context
+def mark_processed(ctx: click.Context, tweet_ids: tuple[str, ...]) -> None:
+    """Mark one or more bookmarks as processed."""
+    data_dir = ctx.obj["data_dir"]
+    db = get_db(data_dir)
+
+    success_count = 0
+    for tweet_id in tweet_ids:
+        if db.mark_processed(tweet_id):
+            success_count += 1
+        else:
+            console.print(f"[yellow]Warning: Bookmark {tweet_id} not found[/yellow]")
+
+    console.print(f"[green]Marked {success_count} bookmark(s) as processed[/green]")
+
+
+@main.command("mark-unprocessed")
+@click.argument("tweet_ids", nargs=-1, required=True)
+@click.pass_context
+def mark_unprocessed(ctx: click.Context, tweet_ids: tuple[str, ...]) -> None:
+    """Mark one or more bookmarks as unprocessed."""
+    data_dir = ctx.obj["data_dir"]
+    db = get_db(data_dir)
+
+    success_count = 0
+    for tweet_id in tweet_ids:
+        if db.mark_unprocessed(tweet_id):
+            success_count += 1
+        else:
+            console.print(f"[yellow]Warning: Bookmark {tweet_id} not found[/yellow]")
+
+    console.print(f"[green]Marked {success_count} bookmark(s) as unprocessed[/green]")
 
 
 @main.command("import-cookies")

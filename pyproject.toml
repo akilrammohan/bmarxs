@@ -4,6 +4,17 @@ version = "0.1.0"
 description = "CLI tool to export and manage X/Twitter bookmarks"
 readme = "README.md"
 requires-python = ">=3.13"
+license = "MIT"
+authors = [{ name = "Akil Rammohan" }]
+keywords = ["twitter", "x", "bookmarks", "cli", "export"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Utilities",
+]
 dependencies = [
     "beautifulsoup4>=4.14.3",
     "browser-cookie3>=0.20.1",
@@ -12,6 +23,11 @@ dependencies = [
     "playwright>=1.57.0",
     "rich>=14.2.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/akilrammohan/bmarxs"
+Repository = "https://github.com/akilrammohan/bmarxs"
+Issues = "https://github.com/akilrammohan/bmarxs/issues"
 
 [project.scripts]
 bmarxs = "bmarxs.cli:main"

@@ -1,0 +1,18 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# bmarxs data (contains session cookies and database)
+data/
+
+# Export files
+*.json
+*.csv
+bookmarks_*.md

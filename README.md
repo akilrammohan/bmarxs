@@ -2,6 +2,8 @@
 
 CLI for exporting X/Twitter bookmarks. Designed for both human and agent use.
 
+Works by importing login cookies from Chrome. First log into X in Chrome, then close Chrome after successful login. Then run `bmarxs import-cookies` before running anything else.
+
 ## Install
 
 ```bash
